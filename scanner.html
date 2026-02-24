@@ -3,45 +3,139 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://unpkg.com/html5-qrcode"></script>
+
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; background:#f4f6f9; margin:0; padding:0; }
-    h1 { background:#2e86de; color:white; padding:15px; margin:0; }
-    #reader { width: 90%; max-width: 400px; margin: 20px auto; }
-    #error { color: red; margin-top: 10px; font-weight: bold; padding: 0 12px 18px; white-space: pre-line; }
-    button { font-size: 18px; padding: 12px 16px; border:none; border-radius:12px; cursor:pointer; }
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #f4f6f9;
+      margin: 0;
+      padding: 0;
+    }
+
+    h1 {
+      background: #2e86de;
+      color: white;
+      padding: 15px;
+      margin: 0;
+    }
+
+    #reader {
+      width: 90%;
+      max-width: 420px;
+      margin: 20px auto 10px;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 12px;
+    }
+
+    button {
+      font-size: 18px;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    #startBtn { }
+
+    #retryBtn {
+      display: none;
+    }
+
+    #status {
+      max-width: 520px;
+      margin: 10px auto 18px;
+      padding: 0 14px;
+      font-weight: bold;
+      white-space: pre-line;
+    }
+
+    #hint {
+      max-width: 520px;
+      margin: 0 auto 6px;
+      padding: 0 14px 10px;
+      color: #333;
+      font-size: 14px;
+      line-height: 1.35;
+    }
   </style>
 </head>
+
 <body>
   <h1>📷 Escanea tu credencial ISIC</h1>
 
-  <div style="margin:14px;">
+  <div class="controls">
     <button id="startBtn">Iniciar cámara</button>
+    <button id="retryBtn">Escanear otra vez</button>
+  </div>
+
+  <div id="hint">
+    Consejo: mantén el QR centrado y estable por 1 segundo.<br>
+    Si Safari pregunta por permisos, selecciona <b>Allow</b>.
   </div>
 
   <div id="reader"></div>
-  <div id="error"></div>
+  <div id="status"></div>
 
   <script>
-    const APPS_SCRIPT_LOG_URL = "https://script.google.com/macros/s/AKfycbynJ2qmcmAINuZGYMNpSZ9JNz9OUPkFrhc3WlYEddOMMBrJAswIQXKZ8e6oz-hrPCKo/exec"; // <-- put your web app exec URL here
+    // 🔧 PUT YOUR REAL APPS SCRIPT WEB APP /exec URL HERE:
+    const APPS_SCRIPT_LOG_URL = "https://script.google.com/macros/s/XXXX/exec";
 
     const html5QrCode = new Html5Qrcode("reader");
-    let running = false;
 
-    function showError(msg) {
-      document.getElementById("error").innerText = msg || "";
+    let running = false;
+    let locked = false;
+
+    const statusEl = document.getElementById("status");
+    const startBtn = document.getElementById("startBtn");
+    const retryBtn = document.getElementById("retryBtn");
+
+    function setStatus(text, type) {
+      statusEl.innerText = text || "";
+      if (type === "success") statusEl.style.color = "green";
+      else if (type === "error") statusEl.style.color = "red";
+      else statusEl.style.color = "#111";
     }
 
-    function onScanSuccess(decodedText) {
-      // decodedText is the ISIC number (from ISIC app QR)
+    async function stopScanner() {
+      if (!running) return;
+      try { await html5QrCode.stop(); } catch (e) {}
+      try { await html5QrCode.clear(); } catch (e) {}
+      running = false;
+    }
+
+    async function onScanSuccess(decodedText) {
+      // ✅ hard lock to prevent multiple logs
+      if (locked) return;
+      locked = true;
+
       const isic = String(decodedText).trim();
 
-      // Go to Apps Script to log + show success screen, then it returns here automatically
-      window.location.href = `${APPS_SCRIPT_LOG_URL}?isic=${encodeURIComponent(isic)}`;
+      // ✅ show immediate feedback
+      setStatus("✅ Registro exitoso…", "success");
+
+      // ✅ stop camera immediately so it can't scan again
+      await stopScanner();
+
+      // show retry button in case user needs to scan again manually
+      retryBtn.style.display = "inline-block";
+
+      // ✅ slight delay so user sees the success message, then redirect to Apps Script to log
+      setTimeout(() => {
+        window.location.href = `${APPS_SCRIPT_LOG_URL}?isic=${encodeURIComponent(isic)}`;
+      }, 700);
     }
 
-    async function start() {
-      showError("");
-      if (running) return;
+    async function startScanner() {
+      setStatus("", "neutral");
+      locked = false;                 // unlock when starting
+      retryBtn.style.display = "none";
 
       try {
         await html5QrCode.start(
@@ -50,13 +144,20 @@
           onScanSuccess
         );
         running = true;
-        document.getElementById("startBtn").style.display = "none";
+        startBtn.style.display = "none";
       } catch (e) {
-        showError("No se pudo abrir la cámara. Verifica permisos del navegador.");
+        setStatus("No se pudo abrir la cámara. Verifica permisos del navegador.", "error");
       }
     }
 
-    document.getElementById("startBtn").addEventListener("click", start);
+    startBtn.addEventListener("click", startScanner);
+
+    retryBtn.addEventListener("click", async () => {
+      // restart scanning without reloading the page
+      await stopScanner();
+      startBtn.style.display = "inline-block";
+      startScanner();
+    });
   </script>
 </body>
 </html>
