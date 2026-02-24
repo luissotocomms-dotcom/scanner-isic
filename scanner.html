@@ -8,9 +8,17 @@
     body { font-family: Arial, sans-serif; text-align:center; background:#f4f6f9; margin:0; padding:0; }
     h1 { background:#2e86de; color:white; padding:15px; margin:0; }
     #reader { width:90%; max-width:420px; margin:18px auto 10px; }
+
     .controls { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; padding:12px; }
     button { font-size:18px; padding:12px 16px; border:none; border-radius:12px; cursor:pointer; }
+
     #status { max-width:520px; margin:10px auto 18px; padding:0 14px; font-weight:bold; white-space:pre-line; color:#111; }
+
+    #overlay {
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55);
+      color:#fff; align-items:center; justify-content:center; z-index:9999;
+    }
+    #overlayBox { background:rgba(0,0,0,0.70); padding:16px 14px; border-radius:14px; width:min(520px,92%); }
   </style>
 </head>
 
@@ -24,14 +32,19 @@
   <div id="reader"></div>
   <div id="status"></div>
 
+  <div id="overlay"><div id="overlayBox">Registrando…</div></div>
+
   <script>
-    const APPS_SCRIPT_LOG_URL =
+    const LOG_ENDPOINT =
       "https://script.google.com/macros/s/AKfycbynJ2qmcmAINuZGYMNpSZ9JNz9OUPkFrhc3WlYEddOMMBrJAswIQXKZ8e6oz-hrPCKo/exec";
 
     const html5QrCode = new Html5Qrcode("reader");
+
     let locked = false;
+    let running = false;
 
     const statusEl = document.getElementById("status");
+    const overlayEl = document.getElementById("overlay");
     const startBtn = document.getElementById("startBtn");
 
     function setStatus(msg, type) {
@@ -39,33 +52,66 @@
       statusEl.style.color = (type === "success") ? "green" : (type === "error") ? "red" : "#111";
     }
 
-    async function stopFast() {
+    function showOverlay(text) {
+      document.getElementById("overlayBox").innerText = text || "Registrando…";
+      overlayEl.style.display = "flex";
+    }
+
+    function hideOverlay() {
+      overlayEl.style.display = "none";
+    }
+
+    async function stopScanner() {
+      if (!running) return;
       try { html5QrCode.pause(true); } catch(e) {}
       try { await html5QrCode.stop(); } catch(e) {}
       try { await html5QrCode.clear(); } catch(e) {}
+      running = false;
     }
 
-    function onScanSuccess(decodedText) {
+    // Send ISIC to Apps Script WITHOUT navigating away (image beacon).
+    // We treat both onload and onerror as "request sent" because the server logs on request arrival.
+    function sendBeacon(isic) {
+      return new Promise((resolve) => {
+        const url = new URL(LOG_ENDPOINT);
+        url.searchParams.set("isic", String(isic).trim());
+        url.searchParams.set("_ts", String(Date.now()));
+        url.searchParams.set("_r", Math.random().toString(36).slice(2));
+
+        const img = new Image();
+        img.onload = () => resolve();
+        img.onerror = () => resolve(); // still fine; request already hit the server
+        img.src = url.toString();
+      });
+    }
+
+    async function onScanSuccess(decodedText) {
       if (locked) return;
       locked = true;
 
       const isic = String(decodedText).trim();
-      setStatus("✅ Registro exitoso…", "success");
 
-      stopFast();
+      setStatus("✅ QR leído. Registrando…", "success");
+      showOverlay("Registrando…");
 
-      // cache-bust to avoid Safari/Google “try again later” weirdness
-      const url = new URL(APPS_SCRIPT_LOG_URL);
-      url.searchParams.set("isic", isic);
-      url.searchParams.set("_ts", String(Date.now()));
-      url.searchParams.set("_r", Math.random().toString(36).slice(2));
+      // Stop camera immediately to prevent repeated reads
+      await stopScanner();
 
-      window.location.href = url.toString();
+      // Log in background
+      await sendBeacon(isic);
+
+      hideOverlay();
+      setStatus("✅ Registro exitoso", "success");
+
+      // Restart scanning after a short cooldown
+      setTimeout(() => {
+        locked = false;
+        startScanner(); // auto restart
+      }, 1200);
     }
 
     async function startScanner() {
-      locked = false;
-      setStatus("", "neutral");
+      if (running) return;
 
       try {
         await html5QrCode.start(
@@ -73,7 +119,9 @@
           { fps: 10, qrbox: 250 },
           onScanSuccess
         );
+        running = true;
         startBtn.style.display = "none";
+        setStatus("", "neutral");
       } catch (e) {
         setStatus("No se pudo abrir la cámara. Verifica permisos del navegador.", "error");
       }
