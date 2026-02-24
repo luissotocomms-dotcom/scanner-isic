@@ -3,6 +3,7 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://unpkg.com/html5-qrcode"></script>
+
   <style>
     body { font-family: Arial, sans-serif; text-align:center; background:#f4f6f9; margin:0; padding:0; }
     h1 { background:#2e86de; color:white; padding:15px; margin:0; }
@@ -10,10 +11,9 @@
     .controls { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; padding:12px; }
     button { font-size:18px; padding:12px 16px; border:none; border-radius:12px; cursor:pointer; }
     #status { max-width:520px; margin:10px auto 18px; padding:0 14px; font-weight:bold; white-space:pre-line; }
-    #overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); color:#fff; align-items:center; justify-content:center; z-index:9999; }
-    #overlayBox { background:rgba(0,0,0,0.70); padding:16px 14px; border-radius:14px; width:min(520px,92%); }
   </style>
 </head>
+
 <body>
   <h1>📷 Escanea tu credencial ISIC</h1>
 
@@ -24,31 +24,23 @@
   <div id="reader"></div>
   <div id="status"></div>
 
-  <div id="overlay"><div id="overlayBox">Registrando…</div></div>
-
   <script>
-    const LOG_ENDPOINT =
-      "https://script.google.com/macros/s/AKfycbzcoKghW2blHLNV3Dqb1Jf5zS1_cf_Ju3bSyv4pyxJQwQTgQAXk-XNVjfOUiNF2Sg2B/exec";
+    const APPS_SCRIPT_EXEC =
+      "https://script.google.com/macros/s/AKfycbynJ2qmcmAINuZGYMNpSZ9JNz9OUPkFrhc3WlYEddOMMBrJAswIQXKZ8e6oz-hrPCKo/exec";
 
     const html5QrCode = new Html5Qrcode("reader");
     let locked = false;
     let running = false;
 
     const statusEl = document.getElementById("status");
-    const overlayEl = document.getElementById("overlay");
     const startBtn = document.getElementById("startBtn");
 
     function setStatus(msg, type) {
       statusEl.innerText = msg || "";
       statusEl.style.color = (type === "success") ? "green" : (type === "error") ? "red" : "#111";
     }
-    function showOverlay(text) {
-      document.getElementById("overlayBox").innerText = text || "Registrando…";
-      overlayEl.style.display = "flex";
-    }
-    function hideOverlay(){ overlayEl.style.display = "none"; }
 
-    async function stopScanner() {
+    async function stopFast() {
       if (!running) return;
       try { html5QrCode.pause(true); } catch(e) {}
       try { await html5QrCode.stop(); } catch(e) {}
@@ -56,49 +48,29 @@
       running = false;
     }
 
-    async function logInBackground(isic) {
-      const url = new URL(LOG_ENDPOINT);
-      url.searchParams.set("isic", String(isic).trim());
-      url.searchParams.set("_ts", String(Date.now()));
-      url.searchParams.set("_r", Math.random().toString(36).slice(2));
-
-      // Fire-and-forget. no-cors means we can’t read response, but request is sent.
-      try {
-        await fetch(url.toString(), { method: "GET", mode: "no-cors", cache: "no-store" });
-      } catch (e) {
-        // Even if fetch errors, sometimes request still went out. We'll show a warning though.
-        throw e;
-      }
-    }
-
-    async function onScanSuccess(decodedText) {
+    function onScanSuccess(decodedText) {
       if (locked) return;
       locked = true;
 
       const isic = String(decodedText).trim();
-      setStatus("✅ QR leído. Registrando…", "success");
-      showOverlay("Registrando…");
+      setStatus("✅ Registro exitoso…", "success");
 
-      await stopScanner();
+      stopFast();
 
-      try {
-        await logInBackground(isic);
-        hideOverlay();
-        setStatus("✅ Registro exitoso", "success");
-      } catch (e) {
-        hideOverlay();
-        setStatus("⚠️ No se pudo registrar. Intenta de nuevo.", "error");
-      }
+      // Force a fresh request every time (avoids caching)
+      const url = new URL(APPS_SCRIPT_EXEC);
+      url.searchParams.set("isic", isic);
+      url.searchParams.set("_ts", String(Date.now()));
+      url.searchParams.set("_r", Math.random().toString(36).slice(2));
 
-      // restart scanning after a short cooldown
-      setTimeout(() => {
-        locked = false;
-        startScanner();
-      }, 1200);
+      // Navigate (this guarantees Apps Script gets the request)
+      window.location.href = url.toString();
     }
 
     async function startScanner() {
-      if (running) return;
+      locked = false;
+      setStatus("");
+
       try {
         await html5QrCode.start(
           { facingMode: "environment" },
@@ -107,7 +79,6 @@
         );
         running = true;
         startBtn.style.display = "none";
-        if (!locked) setStatus("", "neutral");
       } catch (e) {
         setStatus("No se pudo abrir la cámara. Verifica permisos del navegador.", "error");
       }
